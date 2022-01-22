@@ -2,6 +2,8 @@
     try {
         const puppeteer = require("puppeteer");
         const fs = require("fs");
+        let XLSX = require("xlsx") ;
+
         const browser = await puppeteer.launch({
             headless: false,
             defaultViewport: null,
@@ -46,50 +48,153 @@
 
         //evaluating links of matches
         await page.waitForTimeout(3000);
-        let linksto_Open = await page.evaluate(() => {
-            let linkarr = [];
-            let arr = document.querySelectorAll(".match-info-link-FIXTURES");
-            arr.forEach(ele => {
-                //    let url= "https://www.espncricinfo.com" + ele.getAttribute("href");
-                linkarr.push("https://www.espncricinfo.com" + ele.getAttribute("href"))
+        let linkArr = await page.evaluate(() => {
+            let cardArr = document.querySelectorAll("a.match-info-link-FIXTURES");
+            console.log(cardArr);
+            let linkArr = [];
+            cardArr.forEach(ele => {
+                linkArr.push(ele.getAttribute("href"));
+
             })
-            return linkarr;
+            // let link = cardArr[0].querySelector("a.match-info-link-FIXTURES")
+            // console.log(link)
+            return linkArr;
         })
+        // console.log(linkArr) ;
 
-        // file written for match links
-        fs.writeFileSync("linkfile.json", JSON.stringify(linksto_Open))
+        for (let j = 0; j < linkArr.length; j++) {
+            let link = linkArr[j];
+            let scorepage = await browser.newPage();
+            await scorepage.goto(`https://www.espncricinfo.com${link}`);
+            await scorepage.waitForTimeout(2000);
 
-        //opening each link
-        for(let idx = 0;idx<linksto_Open.length;idx++) {
-            const eachlink = linksto_Open[idx];
-            try {
-                // const newtab = browser.newPage();
-                await page.goto(eachlink);
-                // await waitForSelector(".global-footer")
-                let data = await page.evaluate(() => {
 
-                    let team1 = {};
-                    let team2 = {};
-                    team1.name = document.querySelectorAll(".event div.teams p.name")[0].innerText; 
-                   team2.name = document.querySelectorAll(".event div.teams p.name")[1].innerText;
-                   console.log(team1);
-                 return {
-                     team1,
-                     team2
-                 }
+            let eventData = await scorepage.evaluate(() => {
+                let event = document.querySelector(".event");
+                let team1name = event.querySelectorAll("p.name")[0].innerText;
+                let team2name = event.querySelectorAll("p.name")[1].innerText;
 
-                  //fetching tables
+                // console.log(team1.innerText) ;
+                // console.log(team2.innerText) ;
 
+                let battingDoc = document.querySelectorAll("table.table.batsman");
+                let bowlingDoc = document.querySelectorAll("table.table.bowler");
+                // console.log(bowlingDoc) ;
+                // console.log(battingDoc)
+
+                let bowlerInfo = [];
+                let batterInfo = [];
+
+                bowlingDoc.forEach(ele => {
+                    let tr = ele.querySelectorAll("tbody tr");
+                    let bowlingArr = [];
+                    // console.log(tr) ;
+
+                    for (let i = 0; i < tr.length; i++) {
+                        let bowlerData = tr[i].querySelectorAll("td");
+                        if (bowlerData.length != 1) {
+                            // console.log(bowlerData)
+                            let name = bowlerData[0].innerText;
+                            let overs = bowlerData[1].innerText;
+                            let maiden = bowlerData[2].innerText;
+                            let run = bowlerData[3].innerText;
+                            let wicket = bowlerData[4].innerText;
+                            let economy = bowlerData[5].innerText;
+
+                            let data = {
+                                bowlerName: name,
+                                overs,
+                                maiden,
+                                run,
+                                wicket,
+                                economy
+                            }
+                            bowlingArr.push(data);
+                        }
+
+                    }
+                    bowlerInfo.push(bowlingArr);
+                    // console.log(bowlingArr)
+                })
+
+
+
+
+                battingDoc.forEach(ele => {
+                    let tr = ele.querySelectorAll("tbody tr:nth-child(odd)");
+                    // console.log(tr) ;
+                    let battingArr = [];
+
+                    for (let i = 0; i < tr.length - 1; i++) {
+                        let batterData = tr[i].querySelectorAll("td");
+
+                        let name = batterData[0].innerText;
+                        // console.log(batterData) ;
+                        let runScored = batterData[2].innerText;
+                        let balls = batterData[3].innerText;
+                        let strikeRate = batterData[7].innerText;
+
+                        let data = {
+                            batterName: name,
+                            runScored,
+                            balls,
+                            strikeRate
+                        }
+                        battingArr.push(data);
+                    }
+                    // console.log(battingArr) ;
+                    batterInfo.push(battingArr);
 
                 })
-                     fs.writeFileSync(`data/${idx}team.json`,JSON.stringify(data));
-                    await page.waitForTimeout(100);
-            } catch (error) {
-                 console.log(error);
-            }
+
+                let eventData = [];
+                let team1 = {
+                    name: team1name,
+                    batting: batterInfo[0],
+                    bowling: bowlerInfo[1]
+                }
+                let team2 = {
+                    name: team2name,
+                    batting: batterInfo[1],
+                    bowling: bowlerInfo[0]
+                }
+
+                eventData.push(team1);
+                eventData.push(team2);
+                console.log(eventData);
+
+                // console.log(bowlerInfo) ;
+                // console.log(batterInfo) ;
+                return eventData;
+
+            })
+
+            fs.writeFileSync(`data/match${j + 1} data.json`, JSON.stringify(eventData));
+            let name1 = eventData[0].name;
+            let name2 = eventData[1].name;
+            const team1batting = XLSX.utils.json_to_sheet(eventData[0].batting);
+            const team2batting = XLSX.utils.json_to_sheet(eventData[1].batting);
+            const team1bowling = XLSX.utils.json_to_sheet(eventData[0].bowling);
+            const team2bowling = XLSX.utils.json_to_sheet(eventData[1].bowling);
+            const wb = XLSX.utils.book_new()
+            XLSX.utils.book_append_sheet(wb, team1batting, `${name1}Bat`);
+            XLSX.utils.book_append_sheet(wb, team1bowling, `${name1}Bowl`);
+            XLSX.utils.book_append_sheet(wb, team2batting, `${name2}Bat`);
+            XLSX.utils.book_append_sheet(wb, team2bowling, `${name2}Bowl`);
+            XLSX.writeFile(wb, `Excel_Data/Match${j + 1}.xlsx`);
+            // XLSX.appendFile(team2, `match${j+1}.export.xlsx`) ;
+
+            await scorepage.waitForTimeout(500)
+            await scorepage.close();
+
+
+
         }
 
-       
+
+
+
+
 
     }//try block closes
     catch (e) {
